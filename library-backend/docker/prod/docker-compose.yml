@@ -1,0 +1,93 @@
+# =============================================================================
+# docker-compose.yml — Entorno de PRODUCCIÓN
+# Ubicación: docker/prod/docker-compose.yml
+#
+# Diferencias clave respecto a dev:
+#   - Sin hot-reload ni volúmenes de código fuente.
+#   - Variables de entorno sensibles via archivo .env.prod (nunca en el repo).
+#   - Restart policies agresivas (always).
+#   - MySQL NO expone su puerto al host (solo accesible internamente).
+#   - Límites de recursos (memory, cpu).
+#
+# Uso:
+#   docker compose -f docker/prod/docker-compose.yml --env-file .env.prod up -d --build
+# =============================================================================
+
+version: '3.9'
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Servicio: Base de Datos MySQL (producción)
+  # ---------------------------------------------------------------------------
+  db:
+    image: mysql:8.0
+    container_name: library_db_prod
+    restart: always
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+
+    # En producción NO exponemos el puerto al host (solo red interna)
+    expose:
+      - "3306"
+
+    volumes:
+      - db_data_prod:/var/lib/mysql
+      - ../../src/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${DB_USER}", "-p${DB_PASSWORD}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ---------------------------------------------------------------------------
+  # Servicio: Aplicación Node.js (producción, imagen optimizada)
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: ../..
+      dockerfile: docker/prod/Dockerfile
+
+    container_name: library_app_prod
+    restart: always
+
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-3000}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_POOL_LIMIT: ${DB_POOL_LIMIT:-10}
+
+    ports:
+      - "${PORT:-3000}:3000"
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+# ---------------------------------------------------------------------------
+# Volúmenes nombrados
+# ---------------------------------------------------------------------------
+volumes:
+  db_data_prod:
+    driver: local
+

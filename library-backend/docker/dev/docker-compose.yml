@@ -1,0 +1,87 @@
+# =============================================================================
+# docker-compose.yml — Entorno de DESARROLLO
+# Ubicación: docker/dev/docker-compose.yml
+#
+# Servicios:
+#   db  — MySQL 8.0 con la base de datos inicializada desde init.sql
+#   app — Node.js + Express con hot-reload vía nodemon
+#
+# Uso:
+#   docker compose -f docker/dev/docker-compose.yml up --build
+# =============================================================================
+
+version: '3.9'
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Servicio: Base de Datos MySQL
+  # ---------------------------------------------------------------------------
+  db:
+    image: mysql:8.0
+    container_name: library_db_dev
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: rootsecret          # Contraseña del usuario root
+      MYSQL_DATABASE: library_db               # Base de datos creada automáticamente
+      MYSQL_USER: library_user                 # Usuario de aplicación (sin privilegios de root)
+      MYSQL_PASSWORD: secret                   # Contraseña del usuario de aplicación
+
+    ports:
+      - "3306:3306"   # Exponer al host para conectarse con un cliente SQL (TablePlus, DBeaver, etc.)
+
+    volumes:
+      # Persistencia de datos entre reinicios del contenedor
+      - db_data_dev:/var/lib/mysql
+      # Script de inicialización: se ejecuta una sola vez cuando el volumen es nuevo
+      - ../../src/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "library_user", "-psecret"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Servicio: Aplicación Node.js (desarrollo con hot-reload)
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: ../..          # Raíz del proyecto (donde está package.json)
+      dockerfile: docker/dev/Dockerfile
+
+    container_name: library_app_dev
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DB_HOST: db              # Nombre del servicio MySQL en la red Docker
+      DB_PORT: 3306
+      DB_USER: library_user
+      DB_PASSWORD: secret
+      DB_NAME: library_db
+      DB_POOL_LIMIT: 5
+
+    ports:
+      - "3000:3000"   # Exponer la API al host
+
+    volumes:
+      # Montar el código fuente para hot-reload sin reconstruir la imagen
+      - ../../src:/app/src:ro
+      # Evitar que el volumen de código sobreescriba node_modules del contenedor
+      - /app/node_modules
+
+    depends_on:
+      db:
+        condition: service_healthy   # Esperar a que MySQL esté listo antes de arrancar
+
+# ---------------------------------------------------------------------------
+# Volúmenes nombrados
+# ---------------------------------------------------------------------------
+volumes:
+  db_data_dev:
+    driver: local
+
